@@ -22,6 +22,16 @@ Thumbs.db
 # Jupyter
 .ipynb_checkpoints/
 
+# Real point cloud data (large files)
+data/
+real_pcd/
+*.pcd
+*.las
+*.laz
+*.ply
+*_pred.ply
+*_pred.las
+
 # Environment
 .env
 venv/
