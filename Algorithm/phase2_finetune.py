@@ -91,13 +91,14 @@ def main():
     print(f"Phase 2 — 真实域微调 | LR={args.lr:.1e} | Epochs={args.epochs}")
 
     # ---- 数据 ----
-    npz_path = "data/bridge_4_parsed.npz"
-    if not os.path.exists(npz_path):
-        print(f"错误: 找不到 {npz_path}, 请先运行 inference.py 生成")
+    npz_paths = ["data/bridge_4_parsed.npz", "data/bridge_6_parsed.npz"]
+    missing = [p for p in npz_paths if not os.path.exists(p)]
+    if missing:
+        print(f"Missing: {missing}")
         return
 
-    dataset = RealBridgeDataset(npz_path, pier_class=8, virtual_len=200)
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True,
+    dataset = RealBridgeDataset(npz_paths, pier_class=8, virtual_len=600)
+    loader = DataLoader(dataset, batch_size=1, shuffle=True,
                         collate_fn=collate_stacked, num_workers=0)
 
     # ---- 模型 ----
