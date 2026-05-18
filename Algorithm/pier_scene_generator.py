@@ -48,11 +48,27 @@ class PierSceneGenerator:
             "neg_r": (0.05, 0.18),
             "neg_h": (3.0, 9.0),
             "neg_dist": (2.5, 9.0),
+            # ---- Realistic hard negatives (look-like-pier structures) ----
+            "hard_tree_n": (1, 3),        # 树干
+            "hard_tree_r": (0.3, 0.8),    # 树干半径 (和桥墩重叠!)
+            "hard_tree_h": (4.0, 12.0),
+            "hard_pole_n": (1, 3),        # 电线杆
+            "hard_pole_r": (0.08, 0.2),
+            "hard_pole_h": (6.0, 15.0),
+            "hard_column_n": (1, 2),      # 建筑立柱 (和重力墩几何重叠!)
+            "hard_column_w": (0.4, 1.2),
+            "hard_column_d": (0.4, 1.2),
+            "hard_column_h": (3.0, 8.0),
+            "hard_brace_n": (1, 2),       # 斜撑
+            "hard_brace_r": (0.15, 0.4),
+            "hard_brace_len": (3.0, 8.0),
+            "hard_brace_angle": (25, 60),  # degrees from vertical
             # ---- Point budgets ----
             "n_pier": 3000,
             "n_deck": 1500,
             "n_gnd": 1000,
             "n_neg": 300,  # per negative instance
+            "n_hard_neg": 500,  # per hard negative instance
             # ---- Misc ----
             "noise": 0.01,
         }
@@ -416,6 +432,116 @@ class PierSceneGenerator:
         return pts, meta
 
     # ------------------------------------------------------------------
+    #  realistic hard negatives (Phase 2 improvement)
+    # ------------------------------------------------------------------
+
+    def generate_hard_negatives(self, pier_envelope_radius, pier_top_z):
+        """Generate structures that look like piers but aren't.
+
+        Four types:
+          1. Tree trunks: thick cylinders, slightly tilted
+          2. Utility poles: thin cylinders, possibly with crossbars
+          3. Building columns: rectangular prisms (hardest — identical to gravity piers)
+          4. Diagonal braces: tilted cylinders
+        """
+        pieces = []
+
+        # 1. Tree trunks — thick, slightly irregular cylinders
+        n_trees = int(np.random.randint(*self.cfg["hard_tree_n"]))
+        for _ in range(n_trees):
+            r = self._r("hard_tree_r")
+            h = self._r("hard_tree_h")
+            dist = self._r("neg_dist")
+            azimuth = np.random.uniform(0, 2 * np.pi)
+            actual_dist = pier_envelope_radius + dist + r
+            cx = actual_dist * np.cos(azimuth)
+            cy = actual_dist * np.sin(azimuth)
+            base_z = np.random.uniform(-0.5, 0.5)
+            cyl = self._sample_cylinder(r, h, self.cfg["n_hard_neg"], base_z=base_z)
+            cyl[:, 0] += cx
+            cyl[:, 1] += cy
+            # Slight random tilt for organic look
+            tilt_angle = np.random.uniform(0, 5) * np.pi / 180
+            tilt_axis = np.random.uniform(0, 2 * np.pi)
+            rot_x = np.array([[1, 0, 0],
+                              [0, np.cos(tilt_angle), -np.sin(tilt_angle)],
+                              [0, np.sin(tilt_angle), np.cos(tilt_angle)]])
+            rot_z = np.array([[np.cos(tilt_axis), -np.sin(tilt_axis), 0],
+                              [np.sin(tilt_axis), np.cos(tilt_axis), 0],
+                              [0, 0, 1]])
+            cyl = cyl @ rot_x.T @ rot_z.T
+            cyl[:, 0] += cx; cyl[:, 1] += cy
+            cyl[:, 2] += base_z
+            cyl = self._add_noise(cyl, self.cfg["noise"] * 2)
+            pieces.append(cyl)
+
+        # 2. Utility poles — very thin, tall
+        n_poles = int(np.random.randint(*self.cfg["hard_pole_n"]))
+        for _ in range(n_poles):
+            r = self._r("hard_pole_r")
+            h = self._r("hard_pole_h")
+            dist = self._r("neg_dist")
+            azimuth = np.random.uniform(0, 2 * np.pi)
+            actual_dist = pier_envelope_radius + dist + r
+            cx = actual_dist * np.cos(azimuth)
+            cy = actual_dist * np.sin(azimuth)
+            base_z = np.random.uniform(-0.5, 0.5)
+            cyl = self._sample_cylinder(r, h, self.cfg["n_hard_neg"], base_z=base_z)
+            cyl[:, 0] += cx
+            cyl[:, 1] += cy
+            cyl = self._add_noise(cyl, self.cfg["noise"])
+            pieces.append(cyl)
+
+        # 3. Building columns — rectangular prisms (hardest negatives)
+        n_cols = int(np.random.randint(*self.cfg["hard_column_n"]))
+        for _ in range(n_cols):
+            w = self._r("hard_column_w")
+            d = self._r("hard_column_d")
+            h = self._r("hard_column_h")
+            dist = self._r("neg_dist")
+            azimuth = np.random.uniform(0, 2 * np.pi)
+            actual_dist = pier_envelope_radius + dist + max(w, d)
+            cx = actual_dist * np.cos(azimuth)
+            cy = actual_dist * np.sin(azimuth)
+            base_z = np.random.uniform(-0.5, 0.5)
+            col = self._sample_box(w, d, h, self.cfg["n_hard_neg"], base_z=base_z)
+            col[:, 0] += cx
+            col[:, 1] += cy
+            col = self._add_noise(col, self.cfg["noise"])
+            pieces.append(col)
+
+        # 4. Diagonal braces — tilted cylinders
+        n_braces = int(np.random.randint(*self.cfg["hard_brace_n"]))
+        for _ in range(n_braces):
+            r = self._r("hard_brace_r")
+            length = self._r("hard_brace_len")
+            angle = np.deg2rad(self._r("hard_brace_angle"))
+            dist = self._r("neg_dist")
+            azimuth = np.random.uniform(0, 2 * np.pi)
+            actual_dist = pier_envelope_radius + dist + r
+            cx = actual_dist * np.cos(azimuth)
+            cy = actual_dist * np.sin(azimuth)
+            base_z = np.random.uniform(0, pier_top_z * 0.5)
+            start = np.array([cx, cy, base_z])
+            direction = np.array([np.cos(azimuth) * np.sin(angle),
+                                  np.sin(azimuth) * np.sin(angle),
+                                  np.cos(angle)])
+            direction = direction / np.linalg.norm(direction)
+            brace = self._sample_tilted_cylinder(start, direction, r, length,
+                                                  self.cfg["n_hard_neg"])
+            brace = self._add_noise(brace, self.cfg["noise"])
+            pieces.append(brace)
+
+        if len(pieces) == 0:
+            return np.empty((0, 3)), {"type": "hard_negatives", "instances": 0}
+
+        pts = np.vstack(pieces)
+        meta = {"type": "hard_negatives",
+                "n_trees": n_trees, "n_poles": n_poles,
+                "n_columns": n_cols, "n_braces": n_braces}
+        return pts, meta
+
+    # ------------------------------------------------------------------
     #  main orchestrator
     # ------------------------------------------------------------------
 
@@ -442,6 +568,8 @@ class PierSceneGenerator:
         gnd_pts, gnd_meta = self.generate_ground(pier_base_z=0.0)
         neg_pts, neg_meta = self.generate_negatives(
             pier_meta["pier_width"] / 2, pier_meta["top_z"])
+        hard_neg_pts, hard_neg_meta = self.generate_hard_negatives(
+            pier_meta["pier_width"] / 2, pier_meta["top_z"])
 
         # assemble
         all_pts = [pier_pts, deck_pts, gnd_pts]
@@ -453,11 +581,16 @@ class PierSceneGenerator:
             all_pts.append(neg_pts)
             all_labels.append(np.zeros((len(neg_pts), 1), dtype=np.int8))
 
+        if len(hard_neg_pts) > 0:
+            all_pts.append(hard_neg_pts)
+            all_labels.append(np.zeros((len(hard_neg_pts), 1), dtype=np.int8))
+
         points = np.vstack(all_pts).astype(np.float32)
         labels = np.vstack(all_labels)
 
         meta = {"pier": pier_meta, "deck": deck_meta,
-                "ground": gnd_meta, "negatives": neg_meta}
+                "ground": gnd_meta, "negatives": neg_meta,
+                "hard_negatives": hard_neg_meta}
 
         points, labels = self.degrader.degrade(points, labels)
         meta["degradation"] = self.degrader.cfg
